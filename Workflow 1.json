@@ -1,0 +1,323 @@
+{
+  "name": "Demodesk GTM - Workflow 1",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { properties: {\n  name: $('ScoreLeadAgainstICP').item.json.body.company_name,\n  icp_score: $('ScoreLeadAgainstICP').item.json.icp_score,\n  battlecard_angle: $('ScoreLeadAgainstICP').item.json.battlecard_angle,\n  competitor_note: $('ScoreLeadAgainstICP').item.json.competitor_note\n} } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        928,
+        -256
+      ],
+      "id": "a443e31e-b840-405d-9b48-dfa7813df3e1",
+      "name": "CreateCompanyHot",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "xZHc6RjZPZ7MKPZd",
+          "name": "HubSpot Service Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { properties: {\n  name: $('ScoreLeadAgainstICP').item.json.body.company_name,\n  icp_score: $('ScoreLeadAgainstICP').item.json.icp_score,\n  battlecard_angle: $('ScoreLeadAgainstICP').item.json.battlecard_angle,\n  competitor_note: $('ScoreLeadAgainstICP').item.json.competitor_note\n} } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        480,
+        -160
+      ],
+      "id": "3aa8e413-bde4-48ab-97ee-70efc587f66c",
+      "name": "CreateCompanyLowPrio",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "xZHc6RjZPZ7MKPZd",
+          "name": "HubSpot Service Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clay-intake",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -192,
+        -256
+      ],
+      "id": "d502621d-24c2-4cd2-866c-8929fe8bff65",
+      "name": "IntakeFromClay",
+      "webhookId": "ac4b28f9-a1ba-46ea-a367-01c2b48a274c"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract vendor names from Clay's technographics data, normalizing to lowercase for reliable matching\n\nconst data = $json.body;\nconst techList = Array.isArray(data.technographics) ? data.technographics : [];\n\nconst vendors = techList.map(t => (t.vendor || '').toLowerCase());\n\nconst headcountMatch = (data.headcount || '').match(/[\\d,]+/);\nconst headcount = headcountMatch ? parseInt(headcountMatch[0].replace(/,/g, '')) : 0;\n\n// Vendor detection for Microsoft/Google is done at the suite level (not individual products like Teams or Meet), since tech-stack detection tools typically list \"Microsoft\" or \"Google Workspace\" as a vendor rather than every individual product. This trades precision for practical signal.\n\nconst categories = {\n  crm: vendors.some(v => ['salesforce', 'hubspot', 'pipedrive'].includes(v)),\n  calendarEmail: vendors.some(v => ['microsoft', 'google workspace', 'google'].includes(v)),\n  videoConferencing: vendors.some(v => ['zoom', 'microsoft', 'google workspace', 'google'].includes(v)),\n  dialers: vendors.some(v => ['aircall', 'cloudcall', 'dialpad', 'kixie', 'justcall', 'ringover', 'cloudtalk', 'talkdesk', 'nextiva', 'vonage'].includes(v)),\n  salesEngagement: vendors.some(v => ['salesloft', 'outreach'].includes(v)),\n};\n\n// CRM presence is weighted heavily - the CRM Concierge agent needs it to write data - but Coaching and call recording could still deliver value without one, so it's not treated as a hard gate.\n\nconst hasCRM = categories.crm;\n\n// Confirmed against Demodesk's own comparison pages: they position for 100-5,000 employee teams, explicitly steering 500+ rep orgs toward Gong instead.\n\nconst headcountFits = headcount >= 200 && headcount <= 5000;\n\nlet score = 0;\nif (hasCRM) {\n  score += 2;\n}\nconst additionalCategories = Object.values(categories).filter(Boolean).length - (hasCRM ? 1 : 0);\nscore += additionalCategories;\nif (headcountFits) score += 1;\n\n// Build sales-rep-facing talking points based on which integration categories are present\nconst talkingPoints = [];\nif (categories.crm) talkingPoints.push(\"CRM detected — auto-write fields, save 5+ hrs/week\");\nif (categories.calendarEmail) talkingPoints.push(\"Calendar/email integration — auto-booking & follow-ups\");\nif (categories.videoConferencing) talkingPoints.push(\"Video conferencing — auto record/transcribe/coach\");\nif (categories.dialers) talkingPoints.push(\"Dialer detected — captures phone calls too\");\nif (categories.salesEngagement) talkingPoints.push(\"Sales engagement tool — active outbound, coaching-ready\");\nif (headcountFits) talkingPoints.push(`Headcount (${headcount}) — SMB/mid-market fit`);\nelse if (headcount > 5000) talkingPoints.push(`Headcount (${headcount}) is large — Demodesk may lose to Gong here if the org needs enterprise-scale revenue intelligence.`);\n\nconst battlecardAngle = talkingPoints.map(p => `• ${p}`).join('\\n');\n\n// Competitor detection is tracked separately from scoring — it's context for the rep, not a purchase-readiness signal, since contract timing and satisfaction can't be verified from tech-stack data alone\n\nconst usesGong = vendors.includes('gong');\nconst usesZoominfo = vendors.includes('zoominfo'); // proxy for Chorus, which is bundled under ZoomInfo\nconst usesFathom = vendors.includes('fathom');\n\nlet competitorNote = null;\nif (usesGong) competitorNote = \"Using Gong — lead with pricing (EUR 49 vs EUR 108+/user) and instant vs. 20-30 min delayed coaching.\";\nelse if (usesZoominfo) competitorNote = \"Using Chorus/ZoomInfo — lead with standalone value, no platform lock-in required.\";\nelse if (usesFathom) competitorNote = \"Using Fathom — lead with methodology-native coaching (MEDDIC/BANT/SPICED) vs. their single scorecard tier.\";\n\nreturn {\n  json: {\n    ...$json,\n    icp_score: score,\n    battlecard_angle: battlecardAngle,\n    competitor_note: competitorNote\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        -256
+      ],
+      "id": "6d4e847a-8822-4d4a-b3c6-b87dc93d3a93",
+      "name": "ScoreLeadAgainstICP"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a01fb13c-aa0c-4cac-87f2-4c0f3e191e1b",
+              "leftValue": "={{ $json.icp_score }}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        256,
+        -256
+      ],
+      "id": "503a8550-434c-49bd-9a49-e6fd063d06d2",
+      "name": "FilterQualifiedLeads"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"filterGroups\": [{\n    \"filters\": [{\n      \"propertyName\": \"name\",\n      \"operator\": \"EQ\",\n      \"value\": \"{{ $json.body.company_name }}\"\n    }]\n  }]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        480,
+        -352
+      ],
+      "id": "0ff737d8-8666-420f-ae03-a006256ddfd8",
+      "name": "SearchExistingCompany",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "xZHc6RjZPZ7MKPZd",
+          "name": "HubSpot Service Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "6d486c67-ae33-433b-b57b-1fef81b3c5ba",
+              "leftValue": "={{ $json.total }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        704,
+        -352
+      ],
+      "id": "1c084386-3d83-4432-8985-b4d250fb7f95",
+      "name": "CheckIfCompanyExists"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/companies/{{ $json.results[0].id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "=json",
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "jsonBody": "={{ { properties: {\n  name: $('ScoreLeadAgainstICP').item.json.body.company_name,\n  icp_score: $('ScoreLeadAgainstICP').item.json.icp_score,\n  battlecard_angle: $('ScoreLeadAgainstICP').item.json.battlecard_angle,\n  competitor_note: $('ScoreLeadAgainstICP').item.json.competitor_note\n} } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        928,
+        -448
+      ],
+      "id": "dcd3f6dc-919b-46d0-89be-320178b7d292",
+      "name": "UpdateExistingCompany",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "xZHc6RjZPZ7MKPZd",
+          "name": "HubSpot Service Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "YOUR_SLACK_WEBHOOK_URL_HERE",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"🔥 New hot lead: {{ $json.properties.name }} — ICP Score: {{ $json.properties.icp_score }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1152,
+        -256
+      ],
+      "id": "fa80fb50-d984-4612-a2a2-01043f1d8faa",
+      "name": "NotifySlackHotLead"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "CreateCompanyHot": {
+      "main": [
+        [
+          {
+            "node": "NotifySlackHotLead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IntakeFromClay": {
+      "main": [
+        [
+          {
+            "node": "ScoreLeadAgainstICP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ScoreLeadAgainstICP": {
+      "main": [
+        [
+          {
+            "node": "FilterQualifiedLeads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FilterQualifiedLeads": {
+      "main": [
+        [
+          {
+            "node": "SearchExistingCompany",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CreateCompanyLowPrio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SearchExistingCompany": {
+      "main": [
+        [
+          {
+            "node": "CheckIfCompanyExists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CheckIfCompanyExists": {
+      "main": [
+        [
+          {
+            "node": "UpdateExistingCompany",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CreateCompanyHot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "6f942cb7-bb64-41fb-b110-c6c2909bcb61",
+  "meta": {
+    "instanceId": "8db66dc2bae98cedc97abf7bf51583703db1c10e98a65ef2f01fd37d31a81abb"
+  },
+  "nodeGroups": [],
+  "id": "V8Sw1ahaIlwtJ5uE",
+  "tags": []
+}
